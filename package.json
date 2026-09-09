@@ -1,0 +1,31 @@
+{
+  "name": "@yazanabuashour/tsconfig",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Strict portable TypeScript configuration profiles",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yazanabuashour/typescript-config-policy.git"
+  },
+  "type": "module",
+  "scripts": {
+    "check": "npm run format:check && npm run typecheck && npm run test && npm run lint",
+    "format": "oxfmt .",
+    "format:check": "oxfmt --check .",
+    "lint": "oxlint --deny-warnings --report-unused-disable-directives .",
+    "test": "node --test test/*.test.mjs",
+    "typecheck": "tsc --noEmit",
+    "vendor": "node scripts/vendor.mjs"
+  },
+  "devDependencies": {
+    "@oxlint/plugins": "1.78.0",
+    "@yazanabuashour/oxlint-config": "file:tools/typescript-lint-policy",
+    "oxfmt": "0.64.0",
+    "oxlint": "1.78.0",
+    "typescript": "7.0.2"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}
