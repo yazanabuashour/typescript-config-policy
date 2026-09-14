@@ -8,6 +8,15 @@
     "type": "git",
     "url": "https://github.com/yazanabuashour/typescript-config-policy.git"
   },
+  "files": [
+    "base.json",
+    "bundler.json",
+    "node.json",
+    "node-ts-source.json",
+    "portable.json",
+    "LICENSE",
+    "README.md"
+  ],
   "type": "module",
   "scripts": {
     "check": "npm run format:check && npm run typecheck && npm run test && npm run lint",
