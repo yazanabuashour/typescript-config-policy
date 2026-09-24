@@ -28,10 +28,11 @@
     "vendor": "node scripts/vendor.mjs"
   },
   "devDependencies": {
-    "@oxlint/plugins": "1.78.0",
+    "@oxlint/plugins": "1.85.0",
     "@yazanabuashour/oxlint-config": "file:tools/typescript-lint-policy",
-    "oxfmt": "0.64.0",
-    "oxlint": "1.78.0",
+    "oxfmt": "0.70.0",
+    "oxlint": "1.85.0",
+    "oxlint-tsgolint": "7.0.2002",
     "typescript": "7.0.2"
   },
   "engines": {

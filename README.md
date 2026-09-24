@@ -12,8 +12,9 @@ visibility. The profiles support TypeScript 7 or newer; checks use TypeScript `7
 ## Profiles
 
 - `base.json` enables semantic safety checks, including `strict`,
-  `exactOptionalPropertyTypes`, and `noUncheckedIndexedAccess`. It sets
-  `skipLibCheck: true` and leaves runtime, module, and emit settings to consumers.
+  `exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`, `noImplicitReturns`,
+  `noUnusedLocals`, and `noUnusedParameters`. It checks declaration files with
+  `skipLibCheck: false` and leaves runtime, module, and emit settings to consumers.
 - `portable.json` extends `base.json` with `erasableSyntaxOnly`, `isolatedModules`,
   and `verbatimModuleSyntax` for source that tools can strip without TypeScript emit.
 - `node.json` extends `portable.json` with NodeNext modules and module resolution.
@@ -76,4 +77,13 @@ Keep these settings local because they describe a project rather than shared saf
 - `paths`, project references, `files`, `include`, and `exclude`;
 - language-service plugins, decorators, and class-field behavior.
 
-Override a shared rule only with a documented project-specific reason.
+Override a shared rule only with a documented project-specific reason. Return
+`undefined` explicitly when a value-returning function intentionally has no result.
+Prefix an intentionally unused callback parameter with `_`; remove unused locals
+rather than retaining dead code. Resolve declaration-file errors rather than
+blanket-skipping dependency checks. If a dependency requires a temporary
+`skipLibCheck` override, record the affected dependency and why it is necessary.
+
+[Configuration decisions](receipts/research.md) records upstream comparisons and
+compatibility checks. Oxlint and Oxfmt own linting and formatting; compiler checks
+also protect consumers that use these profiles without the lint policy.
