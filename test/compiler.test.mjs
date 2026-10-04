@@ -69,8 +69,14 @@ NodeTest("base checks incomplete returns, dead bindings, and declaration files",
       if (fixture.diagnostic === null) {
         NodeAssert.equal(result.status, 0, `${fixture.name}: ${output}`);
       } else {
-        NodeAssert.notEqual(result.status, 0, fixture.name);
-        NodeAssert.ok(output.includes(fixture.diagnostic), `${fixture.name}: ${output}`);
+        NodeAssert.ok(result.status > 0, `${fixture.name}: ${output}`);
+        const diagnostics = output.split("\n").filter((line) => line.includes("error TS"));
+        NodeAssert.equal(diagnostics.length, 1, `${fixture.name}: ${output}`);
+        NodeAssert.ok(
+          diagnostics[0].includes(`${fixture.file}(`) &&
+            diagnostics[0].includes(`error ${fixture.diagnostic}:`),
+          `${fixture.name}: ${output}`,
+        );
       }
     }
   } finally {

@@ -51,101 +51,91 @@ const profiles = {
   },
 };
 
-NodeTest("profiles compose through TypeScript 7", () => {
-  const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "typescript-config-policy-"));
+NodeTest(
+  "fresh and replacement snapshots preserve profiles and compose without dependencies",
+  () => {
+    const directory = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), "typescript-config-vendor-test-"),
+    );
 
-  try {
-    NodeFS.writeFileSync(NodePath.join(directory, "index.ts"), "export {};\n");
+    const destination = NodePath.join(directory, "consumer", "tools", "typescript-config-policy");
 
-    for (const [profile, expected] of Object.entries(profiles)) {
-      const config = NodePath.join(directory, "tsconfig.json");
-      NodeFS.writeFileSync(
-        config,
-        `${JSON.stringify({ extends: NodePath.join(root, profile), files: ["index.ts"] })}\n`,
-      );
+    try {
+      const digest = NodeCrypto.createHash("sha256");
 
-      const result = NodeChildProcess.spawnSync(tsc, ["--showConfig", "-p", config], {
-        encoding: "utf8",
-      });
-
-      NodeAssert.equal(result.status, 0, result.stdout + result.stderr);
-      const resolved = JSON.parse(result.stdout);
-      const inherited = { ...profiles["base.json"] };
-
-      if (profile !== "base.json") Object.assign(inherited, profiles["portable.json"]);
-
-      if (profile === "node-ts-source.json") Object.assign(inherited, profiles["node.json"]);
-      Object.assign(inherited, expected);
-
-      for (const [option, value] of Object.entries(inherited)) {
-        NodeAssert.deepEqual(resolved.compilerOptions[option], value, `${profile}: ${option}`);
+      for (const file of Object.keys(profiles).sort()) {
+        digest.update(file);
+        digest.update("\0");
+        digest.update(NodeFS.readFileSync(NodePath.join(root, file)));
       }
+
+      const source = {
+        repository: "https://github.com/yazanabuashour/typescript-config-policy",
+        contentSha256: digest.digest("hex"),
+      };
+
+      const obsolete = NodePath.join(destination, "obsolete.json");
+
+      for (const replacing of [false, true]) {
+        if (replacing) {
+          NodeFS.writeFileSync(obsolete, "{}\n");
+          NodeFS.writeFileSync(NodePath.join(destination, "base.json"), "{}\n");
+        }
+
+        const result = NodeChildProcess.spawnSync(
+          NodeProcess.execPath,
+          [NodePath.join(root, "scripts", "vendor.mjs"), destination],
+          { encoding: "utf8" },
+        );
+
+        NodeAssert.equal(result.status, 0, result.stdout + result.stderr);
+        NodeAssert.equal(NodeFS.existsSync(obsolete), false);
+        NodeAssert.equal(NodeFS.existsSync(NodePath.join(destination, "package.json")), false);
+        NodeAssert.deepEqual(
+          JSON.parse(NodeFS.readFileSync(NodePath.join(destination, "SOURCE.json"), "utf8")),
+          source,
+        );
+
+        for (const file of [...Object.keys(profiles), "LICENSE"]) {
+          NodeAssert.deepEqual(
+            NodeFS.readFileSync(NodePath.join(destination, file)),
+            NodeFS.readFileSync(NodePath.join(root, file)),
+            file,
+          );
+        }
+      }
+
+      NodeFS.writeFileSync(NodePath.join(directory, "index.ts"), "export {};\n");
+
+      for (const [profile, expected] of Object.entries(profiles)) {
+        const config = NodePath.join(directory, "tsconfig.json");
+        NodeFS.writeFileSync(
+          config,
+          `${JSON.stringify({ extends: NodePath.join(destination, profile), files: ["index.ts"] })}\n`,
+        );
+
+        const result = NodeChildProcess.spawnSync(tsc, ["--showConfig", "-p", config], {
+          encoding: "utf8",
+        });
+
+        NodeAssert.equal(result.status, 0, result.stdout + result.stderr);
+        const resolved = JSON.parse(result.stdout);
+        const inherited = { ...profiles["base.json"] };
+
+        if (profile !== "base.json") Object.assign(inherited, profiles["portable.json"]);
+
+        if (profile === "node-ts-source.json") Object.assign(inherited, profiles["node.json"]);
+        Object.assign(inherited, expected);
+
+        for (const [option, value] of Object.entries(inherited)) {
+          NodeAssert.deepEqual(resolved.compilerOptions[option], value, `${profile}: ${option}`);
+        }
+      }
+    } finally {
+      NodeFS.rmSync(directory, { recursive: true, force: true });
     }
-  } finally {
-    NodeFS.rmSync(directory, { recursive: true, force: true });
-  }
-});
-
-NodeTest("vendor snapshots are dependency-free", () => {
-  const directory = NodeFS.mkdtempSync(
-    NodePath.join(NodeOS.tmpdir(), "typescript-config-vendor-test-"),
-  );
-
-  const destination = NodePath.join(directory, "consumer", "tools", "typescript-config-policy");
-
-  try {
-    const result = NodeChildProcess.spawnSync(
-      NodeProcess.execPath,
-      [NodePath.join(root, "scripts", "vendor.mjs"), destination],
-      { encoding: "utf8" },
-    );
-
-    NodeAssert.equal(result.status, 0, result.stderr);
-    NodeAssert.equal(NodeFS.existsSync(NodePath.join(destination, "package.json")), false);
-
-    for (const file of [...Object.keys(profiles), "LICENSE"]) {
-      NodeAssert.deepEqual(
-        NodeFS.readFileSync(NodePath.join(destination, file)),
-        NodeFS.readFileSync(NodePath.join(root, file)),
-        file,
-      );
-    }
-
-    const source = JSON.parse(
-      NodeFS.readFileSync(NodePath.join(destination, "SOURCE.json"), "utf8"),
-    );
-
-    const digest = NodeCrypto.createHash("sha256");
-
-    for (const file of Object.keys(profiles).sort()) {
-      digest.update(file);
-      digest.update("\0");
-      digest.update(NodeFS.readFileSync(NodePath.join(destination, file)));
-    }
-
-    NodeAssert.deepEqual(source, {
-      repository: "https://github.com/yazanabuashour/typescript-config-policy",
-      contentSha256: digest.digest("hex"),
-    });
-    const obsolete = NodePath.join(destination, "obsolete.json");
-    NodeFS.writeFileSync(obsolete, "{}\n");
-
-    const replacement = NodeChildProcess.spawnSync(
-      NodeProcess.execPath,
-      [NodePath.join(root, "scripts", "vendor.mjs"), destination],
-      { encoding: "utf8" },
-    );
-
-    NodeAssert.equal(replacement.status, 0, replacement.stderr);
-    NodeAssert.equal(NodeFS.existsSync(obsolete), false);
-    NodeAssert.deepEqual(
-      JSON.parse(NodeFS.readFileSync(NodePath.join(destination, "SOURCE.json"), "utf8")),
-      source,
-    );
-  } finally {
-    NodeFS.rmSync(directory, { recursive: true, force: true });
-  }
-});
+  },
+);
 
 NodeTest("vendor rejects unsafe destinations without deleting them", () => {
   const directory = NodeFS.mkdtempSync(
@@ -163,7 +153,8 @@ NodeTest("vendor rejects unsafe destinations without deleting them", () => {
       { encoding: "utf8" },
     );
 
-    NodeAssert.notEqual(result.status, 0);
+    NodeAssert.equal(result.status, 1, result.stdout + result.stderr);
+    NodeAssert.match(result.stderr, /Refusing unsafe snapshot destination/);
     NodeAssert.equal(NodeFS.readFileSync(marker, "utf8"), "preserved");
   } finally {
     NodeFS.rmSync(directory, { recursive: true, force: true });
@@ -177,19 +168,40 @@ NodeTest("vendor preserves unidentified existing directories", () => {
 
   const destination = NodePath.join(directory, "consumer", "tools", "typescript-config-policy");
   const marker = NodePath.join(destination, "marker");
+  const metadata = NodePath.join(destination, "SOURCE.json");
+
+  const cases = [
+    { source: null, diagnostic: /ENOENT/ },
+    { source: "invalid JSON", diagnostic: /SyntaxError/ },
+    {
+      source: JSON.stringify({ repository: "https://example.com/other-policy" }),
+      diagnostic: /Refusing to replace an unidentified snapshot/,
+    },
+  ];
 
   try {
     NodeFS.mkdirSync(destination, { recursive: true });
     NodeFS.writeFileSync(marker, "preserved");
 
-    const result = NodeChildProcess.spawnSync(
-      NodeProcess.execPath,
-      [NodePath.join(root, "scripts", "vendor.mjs"), destination],
-      { encoding: "utf8" },
-    );
+    for (const fixture of cases) {
+      if (fixture.source !== null) NodeFS.writeFileSync(metadata, fixture.source);
 
-    NodeAssert.notEqual(result.status, 0);
-    NodeAssert.equal(NodeFS.readFileSync(marker, "utf8"), "preserved");
+      const result = NodeChildProcess.spawnSync(
+        NodeProcess.execPath,
+        [NodePath.join(root, "scripts", "vendor.mjs"), destination],
+        { encoding: "utf8" },
+      );
+
+      NodeAssert.equal(result.status, 1, result.stdout + result.stderr);
+      NodeAssert.match(result.stderr, fixture.diagnostic);
+      NodeAssert.equal(NodeFS.readFileSync(marker, "utf8"), "preserved");
+
+      if (fixture.source === null) {
+        NodeAssert.equal(NodeFS.existsSync(metadata), false);
+      } else {
+        NodeAssert.equal(NodeFS.readFileSync(metadata, "utf8"), fixture.source);
+      }
+    }
   } finally {
     NodeFS.rmSync(directory, { recursive: true, force: true });
   }
