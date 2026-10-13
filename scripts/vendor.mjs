@@ -12,7 +12,11 @@ const root = NodePath.dirname(NodePath.dirname(NodeURL.fileURLToPath(import.meta
 
 const destinationArgument = NodeProcess.argv[2];
 
-if (!destinationArgument || !NodePath.isAbsolute(destinationArgument)) {
+if (
+  NodeProcess.argv.length !== 3 ||
+  !destinationArgument ||
+  !NodePath.isAbsolute(destinationArgument)
+) {
   throw new Error("Usage: npm run vendor -- /absolute/consumer/tools/typescript-config-policy");
 }
 
@@ -26,7 +30,9 @@ if (
   destination === NodePath.parse(destination).root ||
   !destination.endsWith(`${NodePath.sep}${expectedSuffix}`) ||
   rootFromDestination === "" ||
-  (!rootFromDestination.startsWith("..") && !NodePath.isAbsolute(rootFromDestination))
+  (rootFromDestination !== ".." &&
+    !rootFromDestination.startsWith(`..${NodePath.sep}`) &&
+    !NodePath.isAbsolute(rootFromDestination))
 ) {
   throw new Error(`Refusing unsafe snapshot destination: ${destination}`);
 }
@@ -72,12 +78,18 @@ if (NodeFS.existsSync(destination)) {
   const entries = NodeFS.readdirSync(destination);
 
   if (entries.length > 0) {
-    const current = JSON.parse(
-      NodeFS.readFileSync(NodePath.join(destination, "SOURCE.json"), "utf8"),
-    );
+    try {
+      const current = JSON.parse(
+        NodeFS.readFileSync(NodePath.join(destination, "SOURCE.json"), "utf8"),
+      );
 
-    if (current.repository !== repository) {
-      throw new Error(`Refusing to replace an unidentified snapshot: ${destination}`);
+      if (current?.repository !== repository) {
+        throw new Error("SOURCE.json repository does not match");
+      }
+    } catch (error) {
+      throw new Error(`Refusing to replace an unidentified snapshot: ${destination}`, {
+        cause: error,
+      });
     }
   }
 }

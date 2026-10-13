@@ -171,7 +171,7 @@ NodeTest(
   },
 );
 
-NodeTest("vendor rejects unsafe destinations without deleting them", () => {
+NodeTest("vendor rejects invalid arguments and unsafe destinations without writing", () => {
   const directory = NodeFS.mkdtempSync(
     NodePath.join(NodeOS.tmpdir(), "typescript-config-safety-test-"),
   );
@@ -181,15 +181,61 @@ NodeTest("vendor rejects unsafe destinations without deleting them", () => {
   try {
     NodeFS.writeFileSync(marker, "preserved");
 
+    const destination = NodePath.join(directory, "tools", "typescript-config-policy");
+
+    const cases = [
+      { arguments: [], diagnostic: /Usage: npm run vendor/ },
+      { arguments: ["relative/path"], diagnostic: /Usage: npm run vendor/ },
+      { arguments: [destination, "--dry-run"], diagnostic: /Usage: npm run vendor/ },
+      { arguments: [directory], diagnostic: /Refusing unsafe snapshot destination/ },
+    ];
+
+    for (const fixture of cases) {
+      const result = NodeChildProcess.spawnSync(
+        NodeProcess.execPath,
+        [NodePath.join(root, "scripts", "vendor.mjs"), ...fixture.arguments],
+        { encoding: "utf8" },
+      );
+
+      NodeAssert.equal(result.status, 1, result.stdout + result.stderr);
+      NodeAssert.match(result.stderr, fixture.diagnostic);
+      NodeAssert.deepEqual(NodeFS.readdirSync(directory), ["marker"]);
+      NodeAssert.equal(NodeFS.readFileSync(marker, "utf8"), "preserved");
+    }
+
+    const producer = NodePath.join(destination, "..producer");
+    NodeFS.mkdirSync(NodePath.join(producer, "scripts"), { recursive: true });
+    NodeFS.copyFileSync(
+      NodePath.join(root, "scripts", "vendor.mjs"),
+      NodePath.join(producer, "scripts", "vendor.mjs"),
+    );
+
+    for (const file of [...Object.keys(profiles), "LICENSE"]) {
+      NodeFS.copyFileSync(NodePath.join(root, file), NodePath.join(producer, file));
+    }
+
+    const metadata = JSON.stringify({
+      repository: "https://github.com/yazanabuashour/typescript-config-policy",
+    });
+
+    NodeFS.writeFileSync(NodePath.join(destination, "SOURCE.json"), metadata);
+
     const result = NodeChildProcess.spawnSync(
       NodeProcess.execPath,
-      [NodePath.join(root, "scripts", "vendor.mjs"), directory],
+      [NodePath.join(producer, "scripts", "vendor.mjs"), destination],
       { encoding: "utf8" },
     );
 
     NodeAssert.equal(result.status, 1, result.stdout + result.stderr);
     NodeAssert.match(result.stderr, /Refusing unsafe snapshot destination/);
-    NodeAssert.equal(NodeFS.readFileSync(marker, "utf8"), "preserved");
+    NodeAssert.equal(
+      NodeFS.readFileSync(NodePath.join(destination, "SOURCE.json"), "utf8"),
+      metadata,
+    );
+    NodeAssert.deepEqual(
+      NodeFS.readFileSync(NodePath.join(producer, "scripts", "vendor.mjs")),
+      NodeFS.readFileSync(NodePath.join(root, "scripts", "vendor.mjs")),
+    );
   } finally {
     NodeFS.rmSync(directory, { recursive: true, force: true });
   }
@@ -205,20 +251,18 @@ NodeTest("vendor preserves unidentified existing directories", () => {
   const metadata = NodePath.join(destination, "SOURCE.json");
 
   const cases = [
-    { source: null, diagnostic: /ENOENT/ },
-    { source: "invalid JSON", diagnostic: /SyntaxError/ },
-    {
-      source: JSON.stringify({ repository: "https://example.com/other-policy" }),
-      diagnostic: /Refusing to replace an unidentified snapshot/,
-    },
+    null,
+    "invalid JSON",
+    "null",
+    JSON.stringify({ repository: "https://example.com/other-policy" }),
   ];
 
   try {
     NodeFS.mkdirSync(destination, { recursive: true });
     NodeFS.writeFileSync(marker, "preserved");
 
-    for (const fixture of cases) {
-      if (fixture.source !== null) NodeFS.writeFileSync(metadata, fixture.source);
+    for (const source of cases) {
+      if (source !== null) NodeFS.writeFileSync(metadata, source);
 
       const result = NodeChildProcess.spawnSync(
         NodeProcess.execPath,
@@ -227,13 +271,13 @@ NodeTest("vendor preserves unidentified existing directories", () => {
       );
 
       NodeAssert.equal(result.status, 1, result.stdout + result.stderr);
-      NodeAssert.match(result.stderr, fixture.diagnostic);
+      NodeAssert.match(result.stderr, /Refusing to replace an unidentified snapshot/);
       NodeAssert.equal(NodeFS.readFileSync(marker, "utf8"), "preserved");
 
-      if (fixture.source === null) {
+      if (source === null) {
         NodeAssert.equal(NodeFS.existsSync(metadata), false);
       } else {
-        NodeAssert.equal(NodeFS.readFileSync(metadata, "utf8"), fixture.source);
+        NodeAssert.equal(NodeFS.readFileSync(metadata, "utf8"), source);
       }
     }
   } finally {
