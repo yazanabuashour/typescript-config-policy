@@ -220,22 +220,28 @@ NodeTest("vendor rejects invalid arguments and unsafe destinations without writi
 
     NodeFS.writeFileSync(NodePath.join(destination, "SOURCE.json"), metadata);
 
-    const result = NodeChildProcess.spawnSync(
-      NodeProcess.execPath,
-      [NodePath.join(producer, "scripts", "vendor.mjs"), destination],
-      { encoding: "utf8" },
-    );
+    const alias = NodePath.join(directory, "alias", "tools");
+    NodeFS.mkdirSync(NodePath.dirname(alias), { recursive: true });
+    NodeFS.symlinkSync(NodePath.join(directory, "tools"), alias, "junction");
 
-    NodeAssert.equal(result.status, 1, result.stdout + result.stderr);
-    NodeAssert.match(result.stderr, /Refusing unsafe snapshot destination/);
-    NodeAssert.equal(
-      NodeFS.readFileSync(NodePath.join(destination, "SOURCE.json"), "utf8"),
-      metadata,
-    );
-    NodeAssert.deepEqual(
-      NodeFS.readFileSync(NodePath.join(producer, "scripts", "vendor.mjs")),
-      NodeFS.readFileSync(NodePath.join(root, "scripts", "vendor.mjs")),
-    );
+    for (const candidate of [destination, NodePath.join(alias, "typescript-config-policy")]) {
+      const result = NodeChildProcess.spawnSync(
+        NodeProcess.execPath,
+        [NodePath.join(producer, "scripts", "vendor.mjs"), candidate],
+        { encoding: "utf8" },
+      );
+
+      NodeAssert.equal(result.status, 1, result.stdout + result.stderr);
+      NodeAssert.match(result.stderr, /Refusing unsafe snapshot destination/);
+      NodeAssert.equal(
+        NodeFS.readFileSync(NodePath.join(destination, "SOURCE.json"), "utf8"),
+        metadata,
+      );
+      NodeAssert.deepEqual(
+        NodeFS.readFileSync(NodePath.join(producer, "scripts", "vendor.mjs")),
+        NodeFS.readFileSync(NodePath.join(root, "scripts", "vendor.mjs")),
+      );
+    }
   } finally {
     NodeFS.rmSync(directory, { recursive: true, force: true });
   }

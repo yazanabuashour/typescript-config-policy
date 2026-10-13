@@ -22,9 +22,10 @@ of its parent; follow the file links for the exact compiler options.
 
 Use Node.js 22.19 or newer for development commands. The destination must be an
 absolute path ending in `tools/typescript-config-policy`. Pass only that path;
-the exporter rejects extra arguments and has no flags. It refuses a nonempty
-directory unless its `SOURCE.json` identifies this repository. Updating
-an identified snapshot replaces the entire directory, including any local additions.
+the exporter rejects extra arguments and has no flags. It refuses paths to the
+source checkout or its ancestors, including symlink aliases. It refuses a nonempty
+directory unless its `SOURCE.json` identifies this repository. Updating an
+identified snapshot replaces the entire directory, including any local additions.
 Keep consumer settings outside the snapshot and retain its license.
 
 1. Select the intended revision of this repository.

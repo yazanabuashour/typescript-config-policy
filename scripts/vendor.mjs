@@ -8,7 +8,9 @@ import * as NodeURL from "node:url";
 
 const repository = "https://github.com/yazanabuashour/typescript-config-policy";
 
-const root = NodePath.dirname(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)));
+const root = NodeFS.realpathSync(
+  NodePath.dirname(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url))),
+);
 
 const destinationArgument = NodeProcess.argv[2];
 
@@ -24,7 +26,11 @@ const destination = NodePath.resolve(destinationArgument);
 
 const expectedSuffix = NodePath.join("tools", "typescript-config-policy");
 
-const rootFromDestination = NodePath.relative(destination, root);
+const destinationForContainment = NodeFS.existsSync(destination)
+  ? NodeFS.realpathSync(destination)
+  : destination;
+
+const rootFromDestination = NodePath.relative(destinationForContainment, root);
 
 if (
   destination === NodePath.parse(destination).root ||
