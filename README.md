@@ -46,7 +46,17 @@ Keep consumer settings outside the snapshot and retain its license.
 
 The exporter copies the profiles and `LICENSE` unchanged, then generates a
 snapshot `README.md` and `SOURCE.json`. It stages the files before replacing the
-destination and restores the previous snapshot if the replacement rename fails.
+destination and attempts to restore the previous snapshot if the replacement
+rename fails, even if staging cleanup also fails. If recovery fails, the error
+retains the original failure and names the staging or backup path that needs
+inspection.
+
+Run updates one at a time in directories you control. The exporter does not
+serialize competing writers or recover automatically after process termination.
+An interrupted replacement can leave the destination absent and the previous
+snapshot in a `.typescript-config-policy.old-*` sibling. Inspect the destination
+and transaction directories before retrying; do not delete a backup you still
+need.
 
 `SOURCE.json` records the public repository URL and `contentSha256`. The SHA-256
 digest covers each profile's filename, a NUL byte, and its file bytes, in filename

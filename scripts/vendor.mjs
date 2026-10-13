@@ -133,10 +133,34 @@ try {
 
   NodeFS.renameSync(temporary, destination);
 } catch (error) {
-  NodeFS.rmSync(temporary, { recursive: true, force: true });
+  const errors = [error];
 
-  if (backupActive && !NodeFS.existsSync(destination)) {
-    NodeFS.renameSync(backup, destination);
+  try {
+    NodeFS.rmSync(temporary, { recursive: true, force: true });
+  } catch (cleanupError) {
+    errors.push(
+      new Error(`Unable to remove snapshot staging directory: ${temporary}`, {
+        cause: cleanupError,
+      }),
+    );
+  }
+
+  try {
+    if (backupActive && !NodeFS.existsSync(destination)) {
+      NodeFS.renameSync(backup, destination);
+    }
+  } catch (rollbackError) {
+    errors.push(
+      new Error(`Unable to restore snapshot from backup: ${backup}`, {
+        cause: rollbackError,
+      }),
+    );
+  }
+
+  if (errors.length > 1) {
+    throw new AggregateError(errors, `Snapshot update and recovery failed: ${destination}`, {
+      cause: error,
+    });
   }
 
   throw error;
