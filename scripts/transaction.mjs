@@ -56,7 +56,7 @@ export function finishTransaction(workspace) {
   NodeFS.rmdirSync(workspace);
 }
 
-export function rollbackSnapshot(workspace, state, backupActive, error) {
+export function rollbackSnapshot(workspace, state, error) {
   const temporary = NodePath.join(workspace, "staging");
   const backup = NodePath.join(workspace, "backup");
   const errors = [error];
@@ -72,7 +72,14 @@ export function rollbackSnapshot(workspace, state, backupActive, error) {
   }
 
   try {
-    if (backupActive) {
+    const identity = pathIdentity(backup);
+
+    if (identity !== null) {
+      if (!sameIdentity(identity, state.previous))
+        throw new Error(
+          `Refusing unowned snapshot backup: ${backup}; recorded identity: ${JSON.stringify(state.previous)}; observed identity: ${JSON.stringify(identity)}`,
+        );
+
       if (pathIdentity(state.destination) !== null)
         throw new Error(
           `Snapshot destination is occupied: ${state.destination}; retained backup: ${backup}`,

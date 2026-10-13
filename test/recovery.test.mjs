@@ -27,7 +27,10 @@ fs.renameSync = (from, to) => {
   if (faults.includes("rollback") && from.endsWith("/backup")) {
     throw new Error("injected rollback failure");
   }
-  return rename(from, to);
+  const result = rename(from, to);
+  if (faults.includes("backup-result") && to.endsWith("/backup"))
+    throw Object.assign(new Error("injected uncertain backup rename result"), { code: "EIO" });
+  return result;
 };
 fs.rmSync = (file, options) => {
   if (faults.includes("cleanup") && file.endsWith("/staging")) {
@@ -37,6 +40,15 @@ fs.rmSync = (file, options) => {
 };
 syncBuiltinESMExports();
 `;
+}
+
+function assertPreviousSnapshot(directory, metadata) {
+  NodeAssert.deepEqual(NodeFS.readdirSync(directory).sort(), ["SOURCE.json", "marker"]);
+  NodeAssert.equal(NodeFS.readFileSync(NodePath.join(directory, "SOURCE.json"), "utf8"), metadata);
+  NodeAssert.equal(
+    NodeFS.readFileSync(NodePath.join(directory, "marker"), "utf8"),
+    "original snapshot",
+  );
 }
 
 NodeTest("vendor attempts rollback even when cleanup fails and preserves failure evidence", () => {
@@ -52,7 +64,14 @@ NodeTest("vendor attempts rollback even when cleanup fails and preserves failure
   });
 
   try {
-    for (const faults of [[], ["cleanup"], ["rollback"], ["cleanup", "rollback"], ["occupied"]]) {
+    for (const faults of [
+      [],
+      ["cleanup"],
+      ["rollback"],
+      ["cleanup", "rollback"],
+      ["occupied"],
+      ["backup-result"],
+    ]) {
       NodeFS.mkdirSync(destination, { recursive: true });
       NodeFS.writeFileSync(NodePath.join(destination, "SOURCE.json"), metadata);
       NodeFS.writeFileSync(NodePath.join(destination, "marker"), "original snapshot");
@@ -65,7 +84,12 @@ NodeTest("vendor attempts rollback even when cleanup fails and preserves failure
       );
 
       NodeAssert.equal(result.status, 1, result.stdout + result.stderr);
-      NodeAssert.match(result.stderr, /injected install failure/);
+      NodeAssert.match(
+        result.stderr,
+        faults.includes("backup-result")
+          ? /injected uncertain backup rename result/
+          : /injected install failure/,
+      );
 
       const workspace = NodePath.join(
         NodePath.dirname(destination),
@@ -108,19 +132,11 @@ NodeTest("vendor attempts rollback even when cleanup fails and preserves failure
         NodeAssert.equal(backup, undefined);
       }
 
-      NodeAssert.deepEqual(NodeFS.readdirSync(preserved).sort(), ["SOURCE.json", "marker"]);
-      NodeAssert.equal(
-        NodeFS.readFileSync(NodePath.join(preserved, "SOURCE.json"), "utf8"),
-        metadata,
-      );
-      NodeAssert.equal(
-        NodeFS.readFileSync(NodePath.join(preserved, "marker"), "utf8"),
-        "original snapshot",
-      );
+      assertPreviousSnapshot(preserved, metadata);
       NodeAssert.deepEqual(
         entries.sort(),
         [
-          ...(faults.length > 0 ? ["state.json"] : []),
+          ...(faults.some((fault) => fault !== "backup-result") ? ["state.json"] : []),
           ...(staging ? [staging] : []),
           ...(backup ? [backup] : []),
         ].sort((left, right) => left.localeCompare(right)),
@@ -129,7 +145,9 @@ NodeTest("vendor attempts rollback even when cleanup fails and preserves failure
         NodeFS.readdirSync(NodePath.dirname(destination)).sort(),
         [
           ...(faults.includes("rollback") ? [] : ["typescript-config-policy"]),
-          ...(faults.length > 0 ? [".typescript-config-policy.transaction"] : []),
+          ...(faults.some((fault) => fault !== "backup-result")
+            ? [".typescript-config-policy.transaction"]
+            : []),
         ].sort(),
       );
       NodeFS.rmSync(NodePath.dirname(destination), { recursive: true });

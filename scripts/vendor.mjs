@@ -92,8 +92,6 @@ export function updateSnapshot(destination) {
     staged: null,
   };
 
-  let backupActive = false;
-
   try {
     SnapshotTransaction.recordState(workspace, state);
     NodeFS.mkdirSync(temporary);
@@ -110,14 +108,11 @@ export function updateSnapshot(destination) {
     state.staged = SnapshotTransaction.pathIdentity(temporary);
     SnapshotTransaction.recordState(workspace, state);
 
-    if (previous !== null) {
-      NodeFS.renameSync(destination, backup);
-      backupActive = true;
-    }
+    if (previous !== null) NodeFS.renameSync(destination, backup);
 
     NodeFS.renameSync(temporary, destination);
   } catch (error) {
-    SnapshotTransaction.rollbackSnapshot(workspace, state, backupActive, error);
+    SnapshotTransaction.rollbackSnapshot(workspace, state, error);
   }
 
   SnapshotTransaction.finishTransaction(workspace);
