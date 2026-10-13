@@ -109,10 +109,13 @@ NodeTest(
 
       const incompleteSource = NodePath.join(directory, "incomplete-source");
       NodeFS.mkdirSync(NodePath.join(incompleteSource, "scripts"), { recursive: true });
-      NodeFS.copyFileSync(
-        NodePath.join(root, "scripts", "vendor.mjs"),
-        NodePath.join(incompleteSource, "scripts", "vendor.mjs"),
-      );
+
+      for (const file of ["vendor.mjs", "transaction.mjs"]) {
+        NodeFS.copyFileSync(
+          NodePath.join(root, "scripts", file),
+          NodePath.join(incompleteSource, "scripts", file),
+        );
+      }
 
       for (const file of Object.keys(profiles)) {
         NodeFS.copyFileSync(NodePath.join(root, file), NodePath.join(incompleteSource, file));
@@ -205,10 +208,13 @@ NodeTest("vendor rejects invalid arguments and unsafe destinations without writi
 
     const producer = NodePath.join(destination, "..producer");
     NodeFS.mkdirSync(NodePath.join(producer, "scripts"), { recursive: true });
-    NodeFS.copyFileSync(
-      NodePath.join(root, "scripts", "vendor.mjs"),
-      NodePath.join(producer, "scripts", "vendor.mjs"),
-    );
+
+    for (const file of ["vendor.mjs", "transaction.mjs"]) {
+      NodeFS.copyFileSync(
+        NodePath.join(root, "scripts", file),
+        NodePath.join(producer, "scripts", file),
+      );
+    }
 
     for (const file of [...Object.keys(profiles), "LICENSE"]) {
       NodeFS.copyFileSync(NodePath.join(root, file), NodePath.join(producer, file));
@@ -224,12 +230,20 @@ NodeTest("vendor rejects invalid arguments and unsafe destinations without writi
     NodeFS.mkdirSync(NodePath.dirname(alias), { recursive: true });
     NodeFS.symlinkSync(NodePath.join(directory, "tools"), alias, "junction");
 
-    for (const candidate of [destination, NodePath.join(alias, "typescript-config-policy")]) {
-      const result = NodeChildProcess.spawnSync(
-        NodeProcess.execPath,
-        [NodePath.join(producer, "scripts", "vendor.mjs"), candidate],
-        { encoding: "utf8" },
-      );
+    const sourceAlias = NodePath.join(directory, "source-alias");
+
+    NodeFS.symlinkSync(producer, sourceAlias, "junction");
+    const program = NodePath.join(producer, "scripts", "vendor.mjs");
+    const aliased = NodePath.join(alias, "typescript-config-policy");
+
+    for (const [script, candidate] of [
+      [program, destination],
+      [program, aliased],
+      [NodePath.join(sourceAlias, "scripts", "vendor.mjs"), aliased],
+    ]) {
+      const result = NodeChildProcess.spawnSync(NodeProcess.execPath, [script, candidate], {
+        encoding: "utf8",
+      });
 
       NodeAssert.equal(result.status, 1, result.stdout + result.stderr);
       NodeAssert.match(result.stderr, /Refusing unsafe snapshot destination/);
@@ -247,7 +261,7 @@ NodeTest("vendor rejects invalid arguments and unsafe destinations without writi
   }
 });
 
-NodeTest("vendor preserves unidentified existing directories", () => {
+NodeTest("vendor preserves unidentified directories and dangling destination links", () => {
   const directory = NodeFS.mkdtempSync(
     NodePath.join(NodeOS.tmpdir(), "typescript-config-identity-test-"),
   );
@@ -286,6 +300,25 @@ NodeTest("vendor preserves unidentified existing directories", () => {
         NodeAssert.equal(NodeFS.readFileSync(metadata, "utf8"), source);
       }
     }
+
+    NodeFS.rmSync(destination, { recursive: true });
+    const missing = NodePath.join(directory, "missing");
+
+    NodeFS.symlinkSync(missing, destination, "junction");
+
+    const refused = NodeChildProcess.spawnSync(
+      NodeProcess.execPath,
+      [NodePath.join(root, "scripts", "vendor.mjs"), destination],
+      { encoding: "utf8" },
+    );
+
+    NodeAssert.equal(refused.status, 1, refused.stdout + refused.stderr);
+    NodeAssert.match(refused.stderr, /Refusing to replace an unidentified snapshot/);
+    NodeAssert.ok(NodeFS.lstatSync(destination).isSymbolicLink());
+    NodeAssert.equal(NodeFS.readlinkSync(destination), missing);
+    NodeAssert.deepEqual(NodeFS.readdirSync(NodePath.dirname(destination)), [
+      "typescript-config-policy",
+    ]);
   } finally {
     NodeFS.rmSync(directory, { recursive: true, force: true });
   }

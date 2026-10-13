@@ -1,64 +1,20 @@
 #!/usr/bin/env node
 
+import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeProcess from "node:process";
 import * as NodeURL from "node:url";
+import * as SnapshotTransaction from "./transaction.mjs";
 
-const repository = "https://github.com/yazanabuashour/typescript-config-policy";
+const repository = SnapshotTransaction.repository;
 
 const root = NodeFS.realpathSync(
   NodePath.dirname(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url))),
 );
 
-const destinationArgument = NodeProcess.argv[2];
-
-if (
-  NodeProcess.argv.length !== 3 ||
-  !destinationArgument ||
-  !NodePath.isAbsolute(destinationArgument)
-) {
-  throw new Error("Usage: npm run vendor -- /absolute/consumer/tools/typescript-config-policy");
-}
-
-const destination = NodePath.resolve(destinationArgument);
-
-const expectedSuffix = NodePath.join("tools", "typescript-config-policy");
-
-const destinationForContainment = NodeFS.existsSync(destination)
-  ? NodeFS.realpathSync(destination)
-  : destination;
-
-const rootFromDestination = NodePath.relative(destinationForContainment, root);
-
-if (
-  destination === NodePath.parse(destination).root ||
-  !destination.endsWith(`${NodePath.sep}${expectedSuffix}`) ||
-  rootFromDestination === "" ||
-  (rootFromDestination !== ".." &&
-    !rootFromDestination.startsWith(`..${NodePath.sep}`) &&
-    !NodePath.isAbsolute(rootFromDestination))
-) {
-  throw new Error(`Refusing unsafe snapshot destination: ${destination}`);
-}
-
 const profiles = ["base.json", "bundler.json", "node-ts-source.json", "node.json", "portable.json"];
-
-const contents = profiles.map((file) => [file, NodeFS.readFileSync(NodePath.join(root, file))]);
-
-const digest = NodeCrypto.createHash("sha256");
-
-for (const [file, content] of contents) {
-  digest.update(file);
-  digest.update("\0");
-  digest.update(content);
-}
-
-const source = {
-  repository,
-  contentSha256: digest.digest("hex"),
-};
 
 const readme = `# Vendored TypeScript configuration policy
 
@@ -80,17 +36,23 @@ The consumer's TypeScript configuration selects a profile and owns its runtime
 settings. See the source repository's README for profile details.
 `;
 
-if (NodeFS.existsSync(destination)) {
-  const entries = NodeFS.readdirSync(destination);
+/** Runs in the flock-owned worker, not as a standalone export API. */
+export function updateSnapshot(destination) {
+  SnapshotTransaction.assertOutsideSource(destination, root);
+  SnapshotTransaction.recoverSnapshot(destination, root);
+  SnapshotTransaction.assertOutsideSource(destination, root);
 
-  if (entries.length > 0) {
+  const previous = SnapshotTransaction.pathIdentity(destination);
+
+  if (previous !== null) {
     try {
-      const current = JSON.parse(
-        NodeFS.readFileSync(NodePath.join(destination, "SOURCE.json"), "utf8"),
-      );
+      if (NodeFS.readdirSync(destination).length > 0) {
+        const current = JSON.parse(
+          NodeFS.readFileSync(NodePath.join(destination, "SOURCE.json"), "utf8"),
+        );
 
-      if (current?.repository !== repository) {
-        throw new Error("SOURCE.json repository does not match");
+        if (current?.repository !== repository)
+          throw new Error("SOURCE.json repository does not match");
       }
     } catch (error) {
       throw new Error(`Refusing to replace an unidentified snapshot: ${destination}`, {
@@ -98,72 +60,130 @@ if (NodeFS.existsSync(destination)) {
       });
     }
   }
-}
 
-const parent = NodePath.dirname(destination);
-
-const name = NodePath.basename(destination);
-
-const transaction = NodeCrypto.randomUUID();
-
-const temporary = NodePath.join(parent, `.${name}.new-${transaction}`);
-
-const backup = NodePath.join(parent, `.${name}.old-${transaction}`);
-
-let backupActive = false;
-
-try {
-  NodeFS.mkdirSync(temporary, { recursive: true });
+  const contents = profiles.map((file) => [file, NodeFS.readFileSync(NodePath.join(root, file))]);
+  const digest = NodeCrypto.createHash("sha256");
 
   for (const [file, content] of contents) {
-    NodeFS.writeFileSync(NodePath.join(temporary, file), content);
+    digest.update(file);
+    digest.update("\0");
+    digest.update(content);
   }
 
-  NodeFS.copyFileSync(NodePath.join(root, "LICENSE"), NodePath.join(temporary, "LICENSE"));
-  NodeFS.writeFileSync(NodePath.join(temporary, "README.md"), readme);
-  NodeFS.writeFileSync(
-    NodePath.join(temporary, "SOURCE.json"),
-    `${JSON.stringify(source, null, 2)}\n`,
+  const source = { repository, contentSha256: digest.digest("hex") };
+
+  const workspace = NodePath.join(
+    NodePath.dirname(destination),
+    ".typescript-config-policy.transaction",
   );
 
-  if (NodeFS.existsSync(destination)) {
-    NodeFS.renameSync(destination, backup);
-    backupActive = true;
-  }
+  const temporary = NodePath.join(workspace, "staging");
+  const backup = NodePath.join(workspace, "backup");
+  NodeFS.mkdirSync(workspace);
 
-  NodeFS.renameSync(temporary, destination);
-} catch (error) {
-  const errors = [error];
+  const state = {
+    version: 1,
+    repository,
+    destination,
+    sourceRoot: root,
+    pid: NodeProcess.pid,
+    workspace: SnapshotTransaction.pathIdentity(workspace),
+    previous,
+    staged: null,
+  };
+
+  let backupActive = false;
 
   try {
-    NodeFS.rmSync(temporary, { recursive: true, force: true });
-  } catch (cleanupError) {
-    errors.push(
-      new Error(`Unable to remove snapshot staging directory: ${temporary}`, {
-        cause: cleanupError,
-      }),
+    SnapshotTransaction.recordState(workspace, state);
+    NodeFS.mkdirSync(temporary);
+
+    for (const [file, content] of contents)
+      NodeFS.writeFileSync(NodePath.join(temporary, file), content);
+
+    NodeFS.copyFileSync(NodePath.join(root, "LICENSE"), NodePath.join(temporary, "LICENSE"));
+    NodeFS.writeFileSync(NodePath.join(temporary, "README.md"), readme);
+    NodeFS.writeFileSync(
+      NodePath.join(temporary, "SOURCE.json"),
+      `${JSON.stringify(source, null, 2)}\n`,
     );
-  }
+    state.staged = SnapshotTransaction.pathIdentity(temporary);
+    SnapshotTransaction.recordState(workspace, state);
 
-  try {
-    if (backupActive && !NodeFS.existsSync(destination)) {
-      NodeFS.renameSync(backup, destination);
+    if (previous !== null) {
+      NodeFS.renameSync(destination, backup);
+      backupActive = true;
     }
-  } catch (rollbackError) {
-    errors.push(
-      new Error(`Unable to restore snapshot from backup: ${backup}`, {
-        cause: rollbackError,
-      }),
-    );
+
+    NodeFS.renameSync(temporary, destination);
+  } catch (error) {
+    SnapshotTransaction.rollbackSnapshot(workspace, state, backupActive, error);
   }
 
-  if (errors.length > 1) {
-    throw new AggregateError(errors, `Snapshot update and recovery failed: ${destination}`, {
-      cause: error,
-    });
-  }
-
-  throw error;
+  SnapshotTransaction.finishTransaction(workspace);
 }
 
-if (backupActive) NodeFS.rmSync(backup, { recursive: true, force: true });
+function run() {
+  const argument = NodeProcess.argv[2];
+
+  if (NodeProcess.argv.length !== 3 || !argument || !NodePath.isAbsolute(argument)) {
+    throw new Error("Usage: npm run vendor -- /absolute/consumer/tools/typescript-config-policy");
+  }
+
+  const destination = NodePath.resolve(argument);
+
+  if (
+    !destination.endsWith(`${NodePath.sep}${NodePath.join("tools", "typescript-config-policy")}`)
+  ) {
+    throw new Error(`Refusing unsafe snapshot destination: ${destination}`);
+  }
+
+  SnapshotTransaction.assertOutsideSource(destination, root);
+  const parent = NodePath.dirname(destination);
+
+  NodeFS.mkdirSync(parent, { recursive: true });
+  const canonical = NodePath.join(NodeFS.realpathSync(parent), NodePath.basename(destination));
+  const worker = `import { updateSnapshot } from ${JSON.stringify(import.meta.url)}; updateSnapshot(${JSON.stringify(canonical)});`;
+
+  const result = NodeChildProcess.spawnSync(
+    "flock",
+    [
+      "--nonblock",
+      "--no-fork",
+      "--conflict-exit-code",
+      "75",
+      parent,
+      NodeProcess.execPath,
+      ...NodeProcess.execArgv,
+      "--input-type=module",
+      "--eval",
+      worker,
+    ],
+    { stdio: "inherit" },
+  );
+
+  if (result.error)
+    throw new Error(`Unable to start Linux flock for snapshot destination: ${canonical}`, {
+      cause: result.error,
+    });
+
+  if (result.status === 75)
+    throw new Error(
+      `Snapshot destination is locked: ${canonical}; parent: ${NodeFS.realpathSync(parent)}`,
+    );
+
+  if (result.signal)
+    throw new Error(
+      `Snapshot exporter interrupted by ${result.signal}; inspect transaction workspace: ${NodePath.join(NodePath.dirname(canonical), ".typescript-config-policy.transaction")}`,
+    );
+
+  NodeProcess.exit(result.status);
+}
+
+if (
+  NodeProcess.argv[1] &&
+  NodeFS.existsSync(NodeProcess.argv[1]) &&
+  NodeFS.realpathSync(NodeProcess.argv[1]) ===
+    NodeFS.realpathSync(NodeURL.fileURLToPath(import.meta.url))
+)
+  run();

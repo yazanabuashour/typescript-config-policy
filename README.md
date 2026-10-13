@@ -20,8 +20,11 @@ of its parent; follow the file links for the exact compiler options.
 
 ## Vendor or update a snapshot
 
-Use Node.js 22.19 or newer for development commands. The destination must be an
-absolute path ending in `tools/typescript-config-policy`. Pass only that path;
+Use Node.js 22.19 or newer for development commands and put util-linux `flock`
+on `PATH` for the exporter; its Linux tests also use coreutils `mkfifo`.
+Exporter locking and interruption recovery are qualified on Linux local
+filesystems; the exported profiles remain portable and dependency-free.
+The destination must be an absolute path ending in `tools/typescript-config-policy`. Pass only that path;
 the exporter rejects extra arguments and has no flags. It refuses paths to the
 source checkout or its ancestors, including symlink aliases. It refuses a nonempty
 directory unless its `SOURCE.json` identifies this repository. Updating an
@@ -48,15 +51,31 @@ The exporter copies the profiles and `LICENSE` unchanged, then generates a
 snapshot `README.md` and `SOURCE.json`. It stages the files before replacing the
 destination and attempts to restore the previous snapshot if the replacement
 rename fails, even if staging cleanup also fails. If recovery fails, the error
-retains the original failure and names the staging or backup path that needs
-inspection.
+retains the original failure and names the recovery paths that need inspection.
 
-Run updates one at a time in directories you control. The exporter does not
-serialize competing writers or recover automatically after process termination.
-An interrupted replacement can leave the destination absent and the previous
-snapshot in a `.typescript-config-policy.old-*` sibling. Inspect the destination
-and transaction directories before retrying; do not delete a backup you still
-need.
+Use the exporter in a trusted local workspace with cooperating exporters. It
+locks the destination's physical parent directory; an overlapping export to the
+same destination fails immediately, including through parent aliases. The kernel
+releases the lock when the worker exits; there are no leases or stale-lock files.
+
+If an export is interrupted, rerun the same command. The exporter checks the
+ownership journal in the sibling `.typescript-config-policy.transaction`
+directory. It restores an owned backup when the destination is absent, finishes
+cleanup when the staged directory was installed, or discards staging when the
+previous snapshot remains in place. It then continues the requested update.
+
+If ownership or the outcome is ambiguous, the exporter refuses and retains the
+files. Its error names the journal, paths, and recorded or observed device/inode
+identities. Hold an exclusive parent lock while investigating, for example with
+`flock --nonblock /absolute/consumer/tools bash`. Inspect that evidence before
+restoring or retiring any paths; keep unresolved state intact. The recorded PID
+is informational, not permission to delete state. Unjournaled
+`.typescript-config-policy.new-*` and `.typescript-config-policy.old-*` siblings
+from earlier exporters also require ownership inspection. There is no force flag
+or automatic stale-state deletion.
+
+This contract does not provide power-loss durability, continuous availability to
+readers during replacement, or protection against hostile filesystem writers.
 
 `SOURCE.json` records the public repository URL and `contentSha256`. The SHA-256
 digest covers each profile's filename, a NUL byte, and its file bytes, in filename

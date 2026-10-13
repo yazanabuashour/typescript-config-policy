@@ -9,6 +9,36 @@ import * as NodeURL from "node:url";
 
 const root = NodePath.dirname(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)));
 
+function faultPreloader(faults) {
+  return `
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
+const faults = ${JSON.stringify(faults)};
+const rename = fs.renameSync;
+const remove = fs.rmSync;
+fs.renameSync = (from, to) => {
+  if (from.endsWith("/staging")) {
+    if (faults.includes("occupied")) {
+      fs.mkdirSync(to);
+      fs.writeFileSync(to + "/marker", "occupied destination");
+    }
+    throw new Error("injected install failure");
+  }
+  if (faults.includes("rollback") && from.endsWith("/backup")) {
+    throw new Error("injected rollback failure");
+  }
+  return rename(from, to);
+};
+fs.rmSync = (file, options) => {
+  if (faults.includes("cleanup") && file.endsWith("/staging")) {
+    throw new Error("injected cleanup failure");
+  }
+  return remove(file, options);
+};
+syncBuiltinESMExports();
+`;
+}
+
 NodeTest("vendor attempts rollback even when cleanup fails and preserves failure evidence", () => {
   const directory = NodeFS.mkdtempSync(
     NodePath.join(NodeOS.tmpdir(), "typescript-config-recovery-test-"),
@@ -22,34 +52,11 @@ NodeTest("vendor attempts rollback even when cleanup fails and preserves failure
   });
 
   try {
-    for (const faults of [[], ["cleanup"], ["rollback"], ["cleanup", "rollback"]]) {
+    for (const faults of [[], ["cleanup"], ["rollback"], ["cleanup", "rollback"], ["occupied"]]) {
       NodeFS.mkdirSync(destination, { recursive: true });
       NodeFS.writeFileSync(NodePath.join(destination, "SOURCE.json"), metadata);
       NodeFS.writeFileSync(NodePath.join(destination, "marker"), "original snapshot");
-      NodeFS.writeFileSync(
-        preloader,
-        `
-import fs from "node:fs";
-import { syncBuiltinESMExports } from "node:module";
-const faults = ${JSON.stringify(faults)};
-const rename = fs.renameSync;
-const remove = fs.rmSync;
-fs.renameSync = (from, to) => {
-  if (from.includes(".new-")) throw new Error("injected install failure");
-  if (faults.includes("rollback") && from.includes(".old-")) {
-    throw new Error("injected rollback failure");
-  }
-  return rename(from, to);
-};
-fs.rmSync = (file, options) => {
-  if (faults.includes("cleanup") && file.includes(".new-")) {
-    throw new Error("injected cleanup failure");
-  }
-  return remove(file, options);
-};
-syncBuiltinESMExports();
-`,
-      );
+      NodeFS.writeFileSync(preloader, faultPreloader(faults));
 
       const result = NodeChildProcess.spawnSync(
         NodeProcess.execPath,
@@ -59,12 +66,18 @@ syncBuiltinESMExports();
 
       NodeAssert.equal(result.status, 1, result.stdout + result.stderr);
       NodeAssert.match(result.stderr, /injected install failure/);
-      const entries = NodeFS.readdirSync(NodePath.dirname(destination));
-      const backup = entries.find((entry) => entry.startsWith(".typescript-config-policy.old-"));
-      const staging = entries.find((entry) => entry.startsWith(".typescript-config-policy.new-"));
+
+      const workspace = NodePath.join(
+        NodePath.dirname(destination),
+        ".typescript-config-policy.transaction",
+      );
+
+      const entries = NodeFS.existsSync(workspace) ? NodeFS.readdirSync(workspace) : [];
+      const backup = entries.find((entry) => entry === "backup");
+      const staging = entries.find((entry) => entry === "staging");
 
       if (faults.includes("cleanup")) {
-        NodeAssert.match(result.stderr, /Unable to remove snapshot staging directory: .*\.new-/);
+        NodeAssert.match(result.stderr, /Unable to remove snapshot staging directory: .*\/staging/);
         NodeAssert.match(result.stderr, /injected cleanup failure/);
         NodeAssert.ok(staging, result.stderr);
       } else {
@@ -73,12 +86,24 @@ syncBuiltinESMExports();
 
       let preserved = destination;
 
-      if (faults.includes("rollback")) {
-        NodeAssert.match(result.stderr, /Unable to restore snapshot from backup: .*\.old-/);
-        NodeAssert.match(result.stderr, /injected rollback failure/);
+      if (faults.includes("rollback") || faults.includes("occupied")) {
+        NodeAssert.match(result.stderr, /Unable to restore snapshot from backup: .*\/backup/);
         NodeAssert.ok(backup, result.stderr);
-        NodeAssert.equal(NodeFS.existsSync(destination), false);
-        preserved = NodePath.join(NodePath.dirname(destination), backup);
+        preserved = NodePath.join(workspace, backup);
+
+        if (faults.includes("occupied")) {
+          NodeAssert.match(result.stderr, /Snapshot destination is occupied/);
+          NodeAssert.ok(result.stderr.includes(destination));
+          NodeAssert.ok(result.stderr.includes(preserved));
+          NodeAssert.deepEqual(NodeFS.readdirSync(destination), ["marker"]);
+          NodeAssert.equal(
+            NodeFS.readFileSync(NodePath.join(destination, "marker"), "utf8"),
+            "occupied destination",
+          );
+        } else {
+          NodeAssert.match(result.stderr, /injected rollback failure/);
+          NodeAssert.equal(NodeFS.existsSync(destination), false);
+        }
       } else {
         NodeAssert.equal(backup, undefined);
       }
@@ -92,7 +117,21 @@ syncBuiltinESMExports();
         NodeFS.readFileSync(NodePath.join(preserved, "marker"), "utf8"),
         "original snapshot",
       );
-      NodeAssert.equal(entries.length, faults.includes("cleanup") ? 2 : 1);
+      NodeAssert.deepEqual(
+        entries.sort(),
+        [
+          ...(faults.length > 0 ? ["state.json"] : []),
+          ...(staging ? [staging] : []),
+          ...(backup ? [backup] : []),
+        ].sort((left, right) => left.localeCompare(right)),
+      );
+      NodeAssert.deepEqual(
+        NodeFS.readdirSync(NodePath.dirname(destination)).sort(),
+        [
+          ...(faults.includes("rollback") ? [] : ["typescript-config-policy"]),
+          ...(faults.length > 0 ? [".typescript-config-policy.transaction"] : []),
+        ].sort(),
+      );
       NodeFS.rmSync(NodePath.dirname(destination), { recursive: true });
     }
   } finally {
