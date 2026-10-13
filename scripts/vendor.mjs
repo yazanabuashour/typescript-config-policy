@@ -2,7 +2,6 @@
 
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
-import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeProcess from "node:process";
 import * as NodeURL from "node:url";
@@ -34,9 +33,7 @@ if (
 
 const profiles = ["base.json", "bundler.json", "node-ts-source.json", "node.json", "portable.json"];
 
-const contents = await Promise.all(
-  profiles.map(async (file) => [file, await NodeFSP.readFile(NodePath.join(root, file))]),
-);
+const contents = profiles.map((file) => [file, NodeFS.readFileSync(NodePath.join(root, file))]);
 
 const digest = NodeCrypto.createHash("sha256");
 
@@ -72,11 +69,11 @@ settings. See the source repository's README for profile details.
 `;
 
 if (NodeFS.existsSync(destination)) {
-  const entries = await NodeFSP.readdir(destination);
+  const entries = NodeFS.readdirSync(destination);
 
   if (entries.length > 0) {
     const current = JSON.parse(
-      await NodeFSP.readFile(NodePath.join(destination, "SOURCE.json"), "utf8"),
+      NodeFS.readFileSync(NodePath.join(destination, "SOURCE.json"), "utf8"),
     );
 
     if (current.repository !== repository) {
@@ -95,40 +92,36 @@ const temporary = NodePath.join(parent, `.${name}.new-${transaction}`);
 
 const backup = NodePath.join(parent, `.${name}.old-${transaction}`);
 
-await NodeFSP.mkdir(temporary, { recursive: true });
-
-await Promise.all(
-  contents.map(([file, content]) => NodeFSP.writeFile(NodePath.join(temporary, file), content)),
-);
-
-await Promise.all([
-  NodeFSP.copyFile(NodePath.join(root, "LICENSE"), NodePath.join(temporary, "LICENSE")),
-  NodeFSP.writeFile(NodePath.join(temporary, "README.md"), readme),
-  NodeFSP.writeFile(
-    NodePath.join(temporary, "SOURCE.json"),
-    `${JSON.stringify(source, null, 2)}\n`,
-  ),
-]);
-
-const hadDestination = NodeFS.existsSync(destination);
-
 let backupActive = false;
 
 try {
-  if (hadDestination) {
-    await NodeFSP.rename(destination, backup);
+  NodeFS.mkdirSync(temporary, { recursive: true });
+
+  for (const [file, content] of contents) {
+    NodeFS.writeFileSync(NodePath.join(temporary, file), content);
+  }
+
+  NodeFS.copyFileSync(NodePath.join(root, "LICENSE"), NodePath.join(temporary, "LICENSE"));
+  NodeFS.writeFileSync(NodePath.join(temporary, "README.md"), readme);
+  NodeFS.writeFileSync(
+    NodePath.join(temporary, "SOURCE.json"),
+    `${JSON.stringify(source, null, 2)}\n`,
+  );
+
+  if (NodeFS.existsSync(destination)) {
+    NodeFS.renameSync(destination, backup);
     backupActive = true;
   }
 
-  await NodeFSP.rename(temporary, destination);
+  NodeFS.renameSync(temporary, destination);
 } catch (error) {
-  await NodeFSP.rm(temporary, { recursive: true, force: true });
+  NodeFS.rmSync(temporary, { recursive: true, force: true });
 
   if (backupActive && !NodeFS.existsSync(destination)) {
-    await NodeFSP.rename(backup, destination);
+    NodeFS.renameSync(backup, destination);
   }
 
   throw error;
 }
 
-if (backupActive) await NodeFSP.rm(backup, { recursive: true, force: true });
+if (backupActive) NodeFS.rmSync(backup, { recursive: true, force: true });

@@ -1,15 +1,9 @@
 # Configuration decisions
 
 The profiles separate semantic checks from module and runtime settings.
-`test/config.test.mjs` verifies profile composition with TypeScript `7.0.2` and
-checks inherited safety settings and that shared profiles omit consumer-owned
-settings. `test/compiler.test.mjs` verifies that incomplete returns, unused locals
-and parameters, and invalid declaration files fail compilation. It also verifies
-that explicit optional results and underscore-prefixed callback parameters pass.
-
 Runtime libraries, global types, emit paths, path aliases, project references,
-framework settings, and Effect diagnostics stay local. Those settings do not
-have one valid meaning across Node, Bun, browsers, workers, and emitting libraries.
+framework settings, and Effect diagnostics stay local because they do not have
+one valid meaning across Node, Bun, browsers, workers, and emitting libraries.
 
 `bundler.json` sets `noEmit` because a bundler owns JavaScript output.
 `node-ts-source.json` permits `.ts` imports and rewrites relative import
@@ -50,7 +44,3 @@ support declaration checking here. Its runtime target, module choices, JSON
 imports, class-field behavior, and Effect language-service diagnostics remain
 consumer decisions. Effect diagnostics require the consumer's Effect toolchain;
 adding that plugin to these dependency-free profiles would not enforce it.
-
-The lint policy owns anti-slop provenance and executable lint rules. This
-repository consumes its exported Oxlint snapshot instead of duplicating upstream
-rules or introducing a second lint or formatting tool.

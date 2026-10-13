@@ -1,31 +1,30 @@
 # TypeScript configuration policy
 
-Strict, portable TypeScript configuration profiles, available as
-[public GitHub source](https://github.com/yazanabuashour/typescript-config-policy)
-under the [MIT license](LICENSE). Consumers vendor the profiles rather than
-install a registry package.
+Vendor strict, dependency-free TypeScript configuration profiles from this
+[public GitHub repository](https://github.com/yazanabuashour/typescript-config-policy).
+Use TypeScript 7 or newer. The profiles use the [MIT license](LICENSE); there is
+no registry package.
 
-The development manifest uses the name `@yazanabuashour/tsconfig` and keeps
-`private: true` to block npm publication. That flag does not control GitHub
-visibility. The profiles support TypeScript 7 or newer; checks use TypeScript `7.0.2`.
+## Choose a profile
 
-## Profiles
+Extend the profile that matches your toolchain. Each profile inherits the checks
+of its parent; follow the file links for the exact compiler options.
 
-- `base.json` enables semantic safety checks, including `strict`,
-  `exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`, `noImplicitReturns`,
-  `noUnusedLocals`, and `noUnusedParameters`. It checks declaration files with
-  `skipLibCheck: false` and leaves runtime, module, and emit settings to consumers.
-- `portable.json` extends `base.json` with `erasableSyntaxOnly`, `isolatedModules`,
-  and `verbatimModuleSyntax` for source that tools can strip without TypeScript emit.
-- `node.json` extends `portable.json` with NodeNext modules and module resolution.
-- `node-ts-source.json` extends `node.json` to permit local `.ts` imports and
-  rewrite relative import extensions when TypeScript emits. It does not set `noEmit`.
-- `bundler.json` extends `portable.json` with Preserve modules, Bundler module
-  resolution, `.ts` imports, and `noEmit: true`.
+| Profile                                    | Parent          | Use when                                                                         |
+| ------------------------------------------ | --------------- | -------------------------------------------------------------------------------- |
+| [base.json](base.json)                     | —               | You need semantic safety checks without shared module or emit settings.          |
+| [portable.json](portable.json)             | `base.json`     | Your tools strip TypeScript syntax without TypeScript emitting JavaScript.       |
+| [node.json](node.json)                     | `portable.json` | You use NodeNext modules and module resolution.                                  |
+| [node-ts-source.json](node-ts-source.json) | `node.json`     | You use local `.ts` imports in Node source; emitted imports are rewritten.       |
+| [bundler.json](bundler.json)               | `portable.json` | A bundler resolves modules and owns JavaScript output; TypeScript does not emit. |
 
 ## Vendor or update a snapshot
 
-Use Node.js 22.19 or newer for the repository's development commands.
+Use Node.js 22.19 or newer for development commands. The destination must be an
+absolute path ending in `tools/typescript-config-policy`. The exporter refuses a
+nonempty directory unless its `SOURCE.json` identifies this repository. Updating
+an identified snapshot replaces the entire directory, including any local additions.
+Keep consumer settings outside the snapshot and retain its license.
 
 1. Select the intended revision of this repository.
 2. Install the locked dependencies and verify the source:
@@ -35,7 +34,7 @@ Use Node.js 22.19 or newer for the repository's development commands.
    npm run check
    ```
 
-3. Export to an absolute consumer path:
+3. Export the snapshot:
 
    ```bash
    npm run vendor -- /absolute/consumer/tools/typescript-config-policy
@@ -43,18 +42,18 @@ Use Node.js 22.19 or newer for the repository's development commands.
 
 4. Review the snapshot diff and run the consumer's checks.
 
-The exporter copies all five profiles unchanged, plus `LICENSE`, `README.md`,
-and `SOURCE.json`. It refuses a nonempty destination unless `SOURCE.json`
-identifies this repository. Keep the license with the snapshot.
+The exporter copies the profiles and `LICENSE` unchanged, then generates a
+snapshot `README.md` and `SOURCE.json`. It stages the files before replacing the
+destination and restores the previous snapshot if the replacement rename fails.
 
 `SOURCE.json` records the public repository URL and `contentSha256`. The SHA-256
 digest covers each profile's filename, a NUL byte, and its file bytes, in filename
-order. It excludes the license and generated metadata. It identifies profile
+order. It excludes the license, README, and metadata. It identifies profile
 content, not a Git commit or the complete exported directory.
 
 ## Configure the consumer
 
-Extend one profile and supply the runtime settings in the consumer's `tsconfig.json`:
+Extend one profile in the consumer's `tsconfig.json`:
 
 ```json
 {
@@ -69,21 +68,40 @@ Extend one profile and supply the runtime settings in the consumer's `tsconfig.j
 }
 ```
 
-Keep these settings local because they describe a project rather than shared safety checks:
+This Node example needs `@types/node` in the consumer. For ES module source, set
+`"type": "module"` in the consumer's `package.json`. Set `noEmit` locally when Node
+or another tool loads the source; `node-ts-source.json` also supports TypeScript
+emit. Only `bundler.json` requires `noEmit` in the shared policy.
+
+Keep project-specific settings in the consumer:
 
 - `target`, `lib`, global `types`, JSX, and framework options;
 - declarations, source maps, `rootDir`, and `outDir`;
-- `noEmit`, except for the `bundler.json` contract;
 - `paths`, project references, `files`, `include`, and `exclude`;
 - language-service plugins, decorators, and class-field behavior.
 
-Override a shared rule only with a documented project-specific reason. Return
-`undefined` explicitly when a value-returning function intentionally has no result.
-Prefix an intentionally unused callback parameter with `_`; remove unused locals
-rather than retaining dead code. Resolve declaration-file errors rather than
-blanket-skipping dependency checks. If a dependency requires a temporary
-`skipLibCheck` override, record the affected dependency and why it is necessary.
+Override a shared rule only with a documented project-specific reason. The base
+profile checks declaration files and rejects dead bindings and incomplete returns:
 
-[Configuration decisions](receipts/research.md) records upstream comparisons and
-compatibility checks. Oxlint and Oxfmt own linting and formatting; compiler checks
-also protect consumers that use these profiles without the lint policy.
+- Return `undefined` explicitly when a value-returning function has no result.
+- Prefix an intentionally unused callback parameter with `_`; remove unused locals.
+- Resolve declaration-file errors rather than blanket-skipping dependency checks.
+  For a temporary `skipLibCheck` override, record the affected dependency and reason.
+
+## Change the policy
+
+Edit the root profiles, not exported consumer snapshots. Keep runtime-independent
+checks in `base.json` and toolchain behavior in the derived profiles.
+[Configuration decisions](receipts/research.md) explains the boundaries and records
+compatibility receipts.
+
+Run `npm run check` before handing off changes. It checks formatting, type-checks
+the lint configuration, runs profile and exporter contract tests, and lints the
+repository. Use `npm run format` to apply formatting; the individual gates are
+listed in [package.json](package.json).
+
+The compiled [lint policy snapshot](tools/typescript-lint-policy/README.md) is a
+local development dependency, not part of exported compiler profiles. Follow its
+update procedure rather than editing its generated files. Preserve its license
+and provenance files. Keep `private: true` in the root manifest to block npm
+publication; it does not control GitHub visibility.

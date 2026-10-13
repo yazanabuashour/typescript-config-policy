@@ -52,7 +52,7 @@ const profiles = {
 };
 
 NodeTest(
-  "fresh and replacement snapshots preserve profiles and compose without dependencies",
+  "snapshots preserve profiles, survive staging failures, and compose without dependencies",
   () => {
     const directory = NodeFS.mkdtempSync(
       NodePath.join(NodeOS.tmpdir(), "typescript-config-vendor-test-"),
@@ -89,8 +89,10 @@ NodeTest(
         );
 
         NodeAssert.equal(result.status, 0, result.stdout + result.stderr);
-        NodeAssert.equal(NodeFS.existsSync(obsolete), false);
-        NodeAssert.equal(NodeFS.existsSync(NodePath.join(destination, "package.json")), false);
+        NodeAssert.deepEqual(
+          NodeFS.readdirSync(destination).sort(),
+          [...Object.keys(profiles), "LICENSE", "README.md", "SOURCE.json"].sort(),
+        );
         NodeAssert.deepEqual(
           JSON.parse(NodeFS.readFileSync(NodePath.join(destination, "SOURCE.json"), "utf8")),
           source,
@@ -103,6 +105,38 @@ NodeTest(
             file,
           );
         }
+      }
+
+      const incompleteSource = NodePath.join(directory, "incomplete-source");
+      NodeFS.mkdirSync(NodePath.join(incompleteSource, "scripts"), { recursive: true });
+      NodeFS.copyFileSync(
+        NodePath.join(root, "scripts", "vendor.mjs"),
+        NodePath.join(incompleteSource, "scripts", "vendor.mjs"),
+      );
+
+      for (const file of Object.keys(profiles)) {
+        NodeFS.copyFileSync(NodePath.join(root, file), NodePath.join(incompleteSource, file));
+      }
+
+      const snapshot = NodeFS.readdirSync(destination).map((file) => [
+        file,
+        NodeFS.readFileSync(NodePath.join(destination, file)),
+      ]);
+
+      const failed = NodeChildProcess.spawnSync(
+        NodeProcess.execPath,
+        [NodePath.join(incompleteSource, "scripts", "vendor.mjs"), destination],
+        { encoding: "utf8" },
+      );
+
+      NodeAssert.equal(failed.status, 1, failed.stdout + failed.stderr);
+      NodeAssert.match(failed.stderr, /ENOENT.*LICENSE/);
+      NodeAssert.deepEqual(NodeFS.readdirSync(NodePath.dirname(destination)), [
+        "typescript-config-policy",
+      ]);
+
+      for (const [file, content] of snapshot) {
+        NodeAssert.deepEqual(NodeFS.readFileSync(NodePath.join(destination, file)), content, file);
       }
 
       NodeFS.writeFileSync(NodePath.join(directory, "index.ts"), "export {};\n");
